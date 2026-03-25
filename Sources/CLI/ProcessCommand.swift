@@ -47,50 +47,65 @@ struct ProcessCommand: AsyncParsableCommand {
             let domain = WeblocFile.domain(from: pageURL)
             print("Processing: \(fileURL.lastPathComponent) -> \(pageURL)")
 
-            // Step 1: Try HTTP metadata fetch
-            var metadata = try await MetadataFetcher.fetch(url: pageURL)
-            var usedWebKit = false
+            // Step 1: Try Apple LinkPresentation (same engine as Apple Notes)
+            MetadataFetcher._lastLPResult = nil
+            var title: String? = nil
+            var imageData: Data? = nil
+            var faviconData: Data? = nil
 
-            // Step 2: If anti-bot detected, retry via WebKit (renders JS, waits 8s)
-            if metadata.isAntiBot {
-                print("  Anti-bot detected, retrying with WebKit...")
-                if let webkitMeta = try? await ScreenshotService.shared.fetchMetadataViaWebKit(url: pageURL),
-                   !webkitMeta.isAntiBot {
-                    metadata = webkitMeta
-                    usedWebKit = true
+            if let lpMeta = await MetadataFetcher.fetchViaLinkPresentation(url: pageURL) {
+                let lpResult = MetadataFetcher._lastLPResult
+                if !lpMeta.isAntiBot {
+                    title = lpMeta.title
+                    imageData = lpResult?.imageData
+                    faviconData = lpResult?.iconData
+                    print("  LP: title=\(title ?? "nil"), image=\(imageData != nil), icon=\(faviconData != nil)")
                 } else {
-                    // WebKit also blocked — use URL slug as title, continue with screenshot
-                    let urlTitle = MetadataFetcher.titleFromURL(pageURL)
-                    print("  Anti-bot persists. Using URL title: \(urlTitle)")
-                    metadata = PageMetadata(title: urlTitle, imageURL: nil, faviconURL: nil)
+                    print("  LP returned anti-bot page")
                 }
             }
 
-            // Step 2b: If title looks like a raw URL, extract from slug
-            if metadata.title.hasPrefix("http") {
-                let urlTitle = MetadataFetcher.titleFromURL(pageURL)
-                metadata = PageMetadata(title: urlTitle, imageURL: metadata.imageURL, faviconURL: metadata.faviconURL)
+            // Step 2: If LP didn't get a title, try HTTP + SwiftSoup
+            if title == nil || title == pageURL.absoluteString {
+                let metadata = try await MetadataFetcher.fetch(url: pageURL)
+                if !metadata.isAntiBot {
+                    title = metadata.title
+                    if imageData == nil, let imageURL = metadata.imageURL {
+                        imageData = await MetadataFetcher.downloadImage(url: imageURL)
+                    }
+                    if faviconData == nil, let faviconURL = metadata.faviconURL {
+                        faviconData = await MetadataFetcher.downloadImage(url: faviconURL)
+                    }
+                }
             }
 
-            // Step 3: Get preview image (OG image → screenshot)
-            var imageData: Data? = nil
-            if let imageURL = metadata.imageURL {
-                imageData = await MetadataFetcher.downloadImage(url: imageURL)
+            // Step 3: If still no title, try WebKit
+            if title == nil || title!.hasPrefix("http") {
+                print("  Trying WebKit...")
+                if let webkitMeta = try? await ScreenshotService.shared.fetchMetadataViaWebKit(url: pageURL),
+                   !webkitMeta.isAntiBot,
+                   !webkitMeta.title.hasPrefix("http") {
+                    title = webkitMeta.title
+                }
             }
+
+            // Step 4: Last resort — extract title from URL slug
+            if title == nil || title!.hasPrefix("http") {
+                title = MetadataFetcher.titleFromURL(pageURL)
+                print("  Using URL slug title: \(title!)")
+            }
+
+            // Step 5: Get preview image if still missing (screenshot)
             if imageData == nil {
                 imageData = try? await ScreenshotService.shared.takeScreenshot(of: pageURL)
             }
 
-            // Step 4: Get favicon (from page → Google favicon service)
-            var faviconData: Data? = nil
-            if let faviconURL = metadata.faviconURL {
-                faviconData = await MetadataFetcher.downloadImage(url: faviconURL)
-            }
+            // Step 6: Get favicon if still missing (Google service)
             if faviconData == nil, let googleFav = MetadataFetcher.googleFaviconURL(for: domain) {
                 faviconData = await MetadataFetcher.downloadImage(url: googleFav)
             }
 
-            // Step 5: Render card and apply
+            // Step 7: Render card and apply
             let card = try CardRenderer.render(
                 domain: domain,
                 imageData: imageData,
@@ -102,7 +117,7 @@ struct ProcessCommand: AsyncParsableCommand {
                 Logger.error("Failed to set icon for \(fileURL.path)")
             }
 
-            let newURL = try IconSetter.renameFile(at: fileURL, title: metadata.title)
+            let newURL = try IconSetter.renameFile(at: fileURL, title: title!)
             print("  -> \(newURL.lastPathComponent)")
 
             try ProcessingMarker.markProcessed(newURL)

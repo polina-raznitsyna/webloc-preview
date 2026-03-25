@@ -1,4 +1,5 @@
 import Foundation
+import LinkPresentation
 import SwiftSoup
 
 public struct PageMetadata: Sendable {
@@ -75,6 +76,65 @@ public struct MetadataFetcher {
         return try? await URLSession.shared.data(for: request).0
     }
 
+    /// Fetch metadata via Apple's LinkPresentation framework (same as Apple Notes).
+    /// This is the most reliable method — handles anti-bot, JS rendering, etc.
+    public static func fetchViaLinkPresentation(url: URL) async -> PageMetadata? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                let provider = LPMetadataProvider()
+                provider.timeout = 15
+                provider.startFetchingMetadata(for: url) { metadata, error in
+                    guard let metadata = metadata, error == nil else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+
+                    let title = metadata.title
+
+                    // Extract image
+                    var imageData: Data? = nil
+                    if let imageProvider = metadata.imageProvider {
+                        let semaphore = DispatchSemaphore(value: 0)
+                        imageProvider.loadDataRepresentation(forTypeIdentifier: "public.image") { data, _ in
+                            imageData = data
+                            semaphore.signal()
+                        }
+                        semaphore.wait()
+                    }
+
+                    // Extract favicon/icon
+                    var iconData: Data? = nil
+                    if let iconProvider = metadata.iconProvider {
+                        let semaphore = DispatchSemaphore(value: 0)
+                        iconProvider.loadDataRepresentation(forTypeIdentifier: "public.image") { data, _ in
+                            iconData = data
+                            semaphore.signal()
+                        }
+                        semaphore.wait()
+                    }
+
+                    let result = LPResult(
+                        title: title,
+                        imageData: imageData,
+                        iconData: iconData
+                    )
+                    let pageMeta = PageMetadata(
+                        title: title ?? url.absoluteString,
+                        imageURL: nil,
+                        faviconURL: nil
+                    )
+                    // Store the raw data for the caller to use
+                    _lastLPResult = result
+                    continuation.resume(returning: pageMeta)
+                }
+            }
+        }
+    }
+
+    /// Holds image/icon data from the last LPMetadataProvider fetch
+    /// (since LP provides raw data, not URLs)
+    public nonisolated(unsafe) static var _lastLPResult: LPResult?
+
     /// Google favicon service as a reliable fallback.
     public static func googleFaviconURL(for domain: String) -> URL? {
         URL(string: "https://www.google.com/s2/favicons?domain=\(domain)&sz=64")
@@ -135,6 +195,13 @@ public struct MetadataFetcher {
         }
         return URL(string: string, relativeTo: base)?.absoluteURL
     }
+}
+
+/// Data extracted from LPMetadataProvider (provides raw image data, not URLs)
+public struct LPResult: Sendable {
+    public let title: String?
+    public let imageData: Data?
+    public let iconData: Data?
 }
 
 extension String {
