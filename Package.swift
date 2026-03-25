@@ -12,8 +12,8 @@ let package = Package(
         .executableTarget(
             name: "webloc-preview",
             dependencies: [
+                "Core",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-                .product(name: "SwiftSoup", package: "SwiftSoup"),
             ],
             path: "Sources/CLI"
         ),
