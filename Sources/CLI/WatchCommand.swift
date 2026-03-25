@@ -62,7 +62,21 @@ struct WatchCommand: AsyncParsableCommand {
         do {
             let pageURL = try WeblocFile.readURL(from: fileURL)
             let domain = WeblocFile.domain(from: pageURL)
-            let metadata = try await MetadataFetcher.fetch(url: pageURL)
+
+            var metadata = try await MetadataFetcher.fetch(url: pageURL)
+            if metadata.isAntiBot {
+                if let webkitMeta = try? await ScreenshotService.shared.fetchMetadataViaWebKit(url: pageURL),
+                   !webkitMeta.isAntiBot {
+                    metadata = webkitMeta
+                } else {
+                    let urlTitle = MetadataFetcher.titleFromURL(pageURL)
+                    metadata = PageMetadata(title: urlTitle, imageURL: nil, faviconURL: nil)
+                }
+            }
+            if metadata.title.hasPrefix("http") {
+                let urlTitle = MetadataFetcher.titleFromURL(pageURL)
+                metadata = PageMetadata(title: urlTitle, imageURL: metadata.imageURL, faviconURL: metadata.faviconURL)
+            }
 
             var imageData: Data? = nil
             if let imageURL = metadata.imageURL {
@@ -75,6 +89,9 @@ struct WatchCommand: AsyncParsableCommand {
             var faviconData: Data? = nil
             if let faviconURL = metadata.faviconURL {
                 faviconData = await MetadataFetcher.downloadImage(url: faviconURL)
+            }
+            if faviconData == nil, let googleFav = MetadataFetcher.googleFaviconURL(for: domain) {
+                faviconData = await MetadataFetcher.downloadImage(url: googleFav)
             }
 
             let card = try CardRenderer.render(

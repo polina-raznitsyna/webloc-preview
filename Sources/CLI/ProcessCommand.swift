@@ -47,8 +47,32 @@ struct ProcessCommand: AsyncParsableCommand {
             let domain = WeblocFile.domain(from: pageURL)
             print("Processing: \(fileURL.lastPathComponent) -> \(pageURL)")
 
-            let metadata = try await MetadataFetcher.fetch(url: pageURL)
+            // Step 1: Try HTTP metadata fetch
+            var metadata = try await MetadataFetcher.fetch(url: pageURL)
+            var usedWebKit = false
 
+            // Step 2: If anti-bot detected, retry via WebKit (renders JS, waits 8s)
+            if metadata.isAntiBot {
+                print("  Anti-bot detected, retrying with WebKit...")
+                if let webkitMeta = try? await ScreenshotService.shared.fetchMetadataViaWebKit(url: pageURL),
+                   !webkitMeta.isAntiBot {
+                    metadata = webkitMeta
+                    usedWebKit = true
+                } else {
+                    // WebKit also blocked — use URL slug as title, continue with screenshot
+                    let urlTitle = MetadataFetcher.titleFromURL(pageURL)
+                    print("  Anti-bot persists. Using URL title: \(urlTitle)")
+                    metadata = PageMetadata(title: urlTitle, imageURL: nil, faviconURL: nil)
+                }
+            }
+
+            // Step 2b: If title looks like a raw URL, extract from slug
+            if metadata.title.hasPrefix("http") {
+                let urlTitle = MetadataFetcher.titleFromURL(pageURL)
+                metadata = PageMetadata(title: urlTitle, imageURL: metadata.imageURL, faviconURL: metadata.faviconURL)
+            }
+
+            // Step 3: Get preview image (OG image → screenshot)
             var imageData: Data? = nil
             if let imageURL = metadata.imageURL {
                 imageData = await MetadataFetcher.downloadImage(url: imageURL)
@@ -57,12 +81,16 @@ struct ProcessCommand: AsyncParsableCommand {
                 imageData = try? await ScreenshotService.shared.takeScreenshot(of: pageURL)
             }
 
-            // Download favicon
+            // Step 4: Get favicon (from page → Google favicon service)
             var faviconData: Data? = nil
             if let faviconURL = metadata.faviconURL {
                 faviconData = await MetadataFetcher.downloadImage(url: faviconURL)
             }
+            if faviconData == nil, let googleFav = MetadataFetcher.googleFaviconURL(for: domain) {
+                faviconData = await MetadataFetcher.downloadImage(url: googleFav)
+            }
 
+            // Step 5: Render card and apply
             let card = try CardRenderer.render(
                 domain: domain,
                 imageData: imageData,
