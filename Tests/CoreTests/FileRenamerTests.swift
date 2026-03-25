@@ -4,15 +4,15 @@ import Foundation
 
 @Suite("FileRenamer")
 struct FileRenamerTests {
-    @Test("generates correct filename from title and domain")
+    @Test("generates filename from title only")
     func basicRename() {
-        let name = IconSetter.newFilename(title: "Cool Article", domain: "example.com")
-        #expect(name == "Cool Article \u{2014} example.com.webloc")
+        let name = IconSetter.newFilename(title: "Cool Article")
+        #expect(name == "Cool Article.webloc")
     }
 
     @Test("sanitizes invalid filename characters")
     func sanitize() {
-        let name = IconSetter.newFilename(title: "What/Why: A \"Test\"", domain: "example.com")
+        let name = IconSetter.newFilename(title: "What/Why: A \"Test\"")
         #expect(!name.contains("/"))
         #expect(!name.contains(":"))
     }
@@ -20,7 +20,7 @@ struct FileRenamerTests {
     @Test("truncates very long titles")
     func truncate() {
         let longTitle = String(repeating: "A", count: 300)
-        let name = IconSetter.newFilename(title: longTitle, domain: "example.com")
+        let name = IconSetter.newFilename(title: longTitle)
         #expect(name.utf8.count <= 255)
     }
 
@@ -30,10 +30,10 @@ struct FileRenamerTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let existing = dir.appendingPathComponent("Title \u{2014} example.com.webloc")
+        let existing = dir.appendingPathComponent("Title.webloc")
         try Data().write(to: existing)
 
-        let resolved = IconSetter.resolveFilename(name: "Title \u{2014} example.com.webloc", in: dir)
-        #expect(resolved == "Title \u{2014} example.com (2).webloc")
+        let resolved = IconSetter.resolveFilename(name: "Title.webloc", in: dir)
+        #expect(resolved == "Title (2).webloc")
     }
 }

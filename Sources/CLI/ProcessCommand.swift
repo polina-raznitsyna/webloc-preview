@@ -57,10 +57,16 @@ struct ProcessCommand: AsyncParsableCommand {
                 imageData = try? await ScreenshotService.shared.takeScreenshot(of: pageURL)
             }
 
+            // Download favicon
+            var faviconData: Data? = nil
+            if let faviconURL = metadata.faviconURL {
+                faviconData = await MetadataFetcher.downloadImage(url: faviconURL)
+            }
+
             let card = try CardRenderer.render(
-                title: metadata.title,
                 domain: domain,
-                imageData: imageData
+                imageData: imageData,
+                faviconData: faviconData
             )
 
             let iconSet = IconSetter.setIcon(card, for: fileURL)
@@ -68,7 +74,7 @@ struct ProcessCommand: AsyncParsableCommand {
                 Logger.error("Failed to set icon for \(fileURL.path)")
             }
 
-            let newURL = try IconSetter.renameFile(at: fileURL, title: metadata.title, domain: domain)
+            let newURL = try IconSetter.renameFile(at: fileURL, title: metadata.title)
             print("  -> \(newURL.lastPathComponent)")
 
             try ProcessingMarker.markProcessed(newURL)

@@ -5,50 +5,52 @@ import AppKit
 
 @Suite("CardRenderer")
 struct CardRendererTests {
-    @Test("renders card with correct dimensions")
-    func correctSize() throws {
+    @Test("renders card with no image")
+    func noImage() throws {
         let image = try CardRenderer.render(
-            title: "Test Title",
             domain: "example.com",
-            imageData: nil
+            imageData: nil,
+            faviconData: nil
         )
         #expect(image.size.width == 512)
         #expect(image.size.height == 512)
     }
 
-    @Test("renders card with image data")
-    func withImage() throws {
-        // Create a simple 100x50 red image as PNG
+    @Test("renders card with landscape image — width is max")
+    func landscapeImage() throws {
         let bitmapRep = NSBitmapImageRep(
-            bitmapDataPlanes: nil, pixelsWide: 100, pixelsHigh: 50,
+            bitmapDataPlanes: nil, pixelsWide: 200, pixelsHigh: 100,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
             isPlanar: false, colorSpaceName: .deviceRGB,
             bytesPerRow: 0, bitsPerPixel: 0
         )!
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmapRep)
-        NSColor.red.setFill()
-        NSRect(x: 0, y: 0, width: 100, height: 50).fill()
-        NSGraphicsContext.restoreGraphicsState()
         let pngData = bitmapRep.representation(using: .png, properties: [:])!
 
         let image = try CardRenderer.render(
-            title: "With Image",
             domain: "example.com",
-            imageData: pngData
+            imageData: pngData,
+            faviconData: nil
         )
         #expect(image.size.width == 512)
-        #expect(image.size.height == 512)
+        #expect(image.size.height <= 512)
     }
 
-    @Test("renders card with long title")
-    func longTitle() throws {
-        let longTitle = String(repeating: "Very Long Title ", count: 20)
+    @Test("renders card with portrait image — height is max")
+    func portraitImage() throws {
+        let bitmapRep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 100, pixelsHigh: 300,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+            isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0
+        )!
+        let pngData = bitmapRep.representation(using: .png, properties: [:])!
+
         let image = try CardRenderer.render(
-            title: longTitle,
             domain: "example.com",
-            imageData: nil
+            imageData: pngData,
+            faviconData: nil
         )
-        #expect(image.size.width == 512)
+        #expect(image.size.width <= 512)
+        #expect(image.size.height == 512)
     }
 }

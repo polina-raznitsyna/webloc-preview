@@ -7,10 +7,10 @@ public struct IconSetter {
         NSWorkspace.shared.setIcon(image, forFile: fileURL.path, options: [])
     }
 
-    /// Rename a .webloc file based on title and domain.
+    /// Rename a .webloc file based on title.
     /// Returns the new file URL, or the original if rename fails.
-    public static func renameFile(at fileURL: URL, title: String, domain: String) throws -> URL {
-        let newName = newFilename(title: title, domain: domain)
+    public static func renameFile(at fileURL: URL, title: String) throws -> URL {
+        let newName = newFilename(title: title)
         let dir = fileURL.deletingLastPathComponent()
         let resolvedName = resolveFilename(name: newName, in: dir)
         let newURL = dir.appendingPathComponent(resolvedName)
@@ -21,10 +21,10 @@ public struct IconSetter {
         return newURL
     }
 
-    /// Generate filename: "{title} — {domain}.webloc"
-    public static func newFilename(title: String, domain: String) -> String {
+    /// Generate filename: "{title}.webloc"
+    public static func newFilename(title: String) -> String {
         let sanitized = sanitize(title)
-        let suffix = " \u{2014} \(domain).webloc"
+        let suffix = ".webloc"
         let maxTitleBytes = 255 - suffix.utf8.count
         let truncated = truncateToUTF8(sanitized, maxBytes: maxTitleBytes)
         return truncated + suffix
