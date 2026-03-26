@@ -189,6 +189,25 @@ public struct MetadataFetcher {
             .joined(separator: " ")
     }
 
+    /// Clean up title: remove JS artifacts like ", undefined", normalize whitespace.
+    public static func cleanTitle(_ title: String) -> String {
+        var t = title
+        // Remove JS template artifacts like ", undefined" or "| undefined"
+        let junkPatterns = [", undefined", " | undefined", "| undefined", " undefined"]
+        for pattern in junkPatterns {
+            if t.hasSuffix(pattern) {
+                t = String(t.dropLast(pattern.count))
+            }
+        }
+        // Normalize whitespace
+        t = t.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Remove trailing punctuation artifacts
+        while let last = t.last, ",.;|–—-".contains(last) {
+            t = String(t.dropLast()).trimmingCharacters(in: .whitespaces)
+        }
+        return t.isEmpty ? title : t
+    }
+
     private static func resolveURL(_ string: String, base: URL) -> URL? {
         if let absolute = URL(string: string), absolute.scheme != nil {
             return absolute

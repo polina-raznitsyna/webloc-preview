@@ -114,11 +114,12 @@ struct WatchCommand: AsyncParsableCommand {
                 faviconData = await MetadataFetcher.downloadImage(url: gf)
             }
 
+            let cleanedTitle = MetadataFetcher.cleanTitle(title!)
             let card = try CardRenderer.render(
                 domain: domain, imageData: imageData, faviconData: faviconData
             )
             _ = IconSetter.setIcon(card, for: fileURL)
-            let newURL = try IconSetter.renameFile(at: fileURL, title: title!)
+            let newURL = try IconSetter.renameFile(at: fileURL, title: cleanedTitle)
             try ProcessingMarker.markProcessed(newURL)
 
             Logger.log("Processed: \(newURL.lastPathComponent)")

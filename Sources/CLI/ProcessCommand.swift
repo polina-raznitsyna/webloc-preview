@@ -47,80 +47,63 @@ struct ProcessCommand: AsyncParsableCommand {
             let domain = WeblocFile.domain(from: pageURL)
             print("Processing: \(fileURL.lastPathComponent) -> \(pageURL)")
 
-            // Step 1: Try Apple LinkPresentation (same engine as Apple Notes)
-            MetadataFetcher._lastLPResult = nil
             var title: String? = nil
             var imageData: Data? = nil
             var faviconData: Data? = nil
 
-            if let lpMeta = await MetadataFetcher.fetchViaLinkPresentation(url: pageURL) {
-                let lpResult = MetadataFetcher._lastLPResult
-                if !lpMeta.isAntiBot {
-                    title = lpMeta.title
-                    imageData = lpResult?.imageData
-                    faviconData = lpResult?.iconData
-                    print("  LP: title=\(title ?? "nil"), image=\(imageData != nil), icon=\(faviconData != nil)")
-                } else {
-                    print("  LP returned anti-bot page")
-                }
+            // 1. LinkPresentation (Apple Notes engine)
+            MetadataFetcher._lastLPResult = nil
+            if let lp = await MetadataFetcher.fetchViaLinkPresentation(url: pageURL), !lp.isAntiBot {
+                title = lp.title
+                imageData = MetadataFetcher._lastLPResult?.imageData
+                faviconData = MetadataFetcher._lastLPResult?.iconData
+                print("  LP: title=\(title ?? "nil"), img=\(imageData != nil), icon=\(faviconData != nil)")
             }
 
-            // Step 2: If LP didn't get a title, try HTTP + SwiftSoup
+            // 2. HTTP + SwiftSoup (non-throwing)
             if title == nil || title == pageURL.absoluteString {
-                let metadata = try await MetadataFetcher.fetch(url: pageURL)
-                if !metadata.isAntiBot {
-                    title = metadata.title
-                    if imageData == nil, let imageURL = metadata.imageURL {
-                        imageData = await MetadataFetcher.downloadImage(url: imageURL)
-                    }
-                    if faviconData == nil, let faviconURL = metadata.faviconURL {
-                        faviconData = await MetadataFetcher.downloadImage(url: faviconURL)
-                    }
+                if let http = try? await MetadataFetcher.fetch(url: pageURL), !http.isAntiBot {
+                    title = http.title
+                    if imageData == nil, let u = http.imageURL { imageData = await MetadataFetcher.downloadImage(url: u) }
+                    if faviconData == nil, let u = http.faviconURL { faviconData = await MetadataFetcher.downloadImage(url: u) }
                 }
             }
 
-            // Step 3: If still no title, try WebKit
-            if title == nil || title!.hasPrefix("http") {
-                print("  Trying WebKit...")
-                if let webkitMeta = try? await ScreenshotService.shared.fetchMetadataViaWebKit(url: pageURL),
-                   !webkitMeta.isAntiBot,
-                   !webkitMeta.title.hasPrefix("http") {
-                    title = webkitMeta.title
+            // 3. WebKit with polling (waits for JS challenges to resolve, up to 22s)
+            if title == nil || title!.hasPrefix("http") || title == pageURL.absoluteString {
+                print("  Trying WebKit (polling)...")
+                if let wk = try? await ScreenshotService.shared.fetchMetadataViaWebKit(url: pageURL),
+                   !wk.isAntiBot, !wk.title.hasPrefix("http"), wk.title != pageURL.absoluteString {
+                    title = wk.title
+                    if imageData == nil, let u = wk.imageURL { imageData = await MetadataFetcher.downloadImage(url: u) }
+                    if faviconData == nil, let u = wk.faviconURL { faviconData = await MetadataFetcher.downloadImage(url: u) }
+                    print("  WebKit: title=\(title ?? "nil")")
                 }
             }
 
-            // Step 4: Last resort — extract title from URL slug
-            if title == nil || title!.hasPrefix("http") {
+            // 4. URL slug as last resort for title
+            if title == nil || title!.hasPrefix("http") || title == pageURL.absoluteString {
                 title = MetadataFetcher.titleFromURL(pageURL)
-                print("  Using URL slug title: \(title!)")
+                print("  URL slug: \(title!)")
             }
 
-            // Step 5: Get preview image if still missing (screenshot)
+            // 5. Screenshot if no image
             if imageData == nil {
                 imageData = try? await ScreenshotService.shared.takeScreenshot(of: pageURL)
             }
 
-            // Step 6: Get favicon if still missing (Google service)
-            if faviconData == nil, let googleFav = MetadataFetcher.googleFaviconURL(for: domain) {
-                faviconData = await MetadataFetcher.downloadImage(url: googleFav)
+            // 6. Google favicon fallback
+            if faviconData == nil, let gf = MetadataFetcher.googleFaviconURL(for: domain) {
+                faviconData = await MetadataFetcher.downloadImage(url: gf)
             }
 
-            // Step 7: Render card and apply
-            let card = try CardRenderer.render(
-                domain: domain,
-                imageData: imageData,
-                faviconData: faviconData
-            )
-
-            let iconSet = IconSetter.setIcon(card, for: fileURL)
-            if !iconSet {
-                Logger.error("Failed to set icon for \(fileURL.path)")
-            }
-
-            let newURL = try IconSetter.renameFile(at: fileURL, title: title!)
-            print("  -> \(newURL.lastPathComponent)")
-
+            // 7. Render and apply
+            let cleanedTitle = MetadataFetcher.cleanTitle(title!)
+            let card = try CardRenderer.render(domain: domain, imageData: imageData, faviconData: faviconData)
+            _ = IconSetter.setIcon(card, for: fileURL)
+            let newURL = try IconSetter.renameFile(at: fileURL, title: cleanedTitle)
             try ProcessingMarker.markProcessed(newURL)
+            print("  -> \(newURL.lastPathComponent)")
             Logger.log("Processed: \(newURL.lastPathComponent)")
 
         } catch {
