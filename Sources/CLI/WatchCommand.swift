@@ -49,7 +49,9 @@ struct WatchCommand: AsyncParsableCommand {
         watcher.start()
 
         // Block forever — keep the daemon running
-        dispatchMain()
+        while true {
+            try? await Task.sleep(nanoseconds: 3_600_000_000_000) // wake up every hour
+        }
     }
 
     private static func processDetectedFile(path: String, notify: Bool) async {
