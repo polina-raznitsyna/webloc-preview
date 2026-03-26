@@ -49,9 +49,7 @@ struct WatchCommand: AsyncParsableCommand {
         watcher.start()
 
         // Block forever — keep the daemon running
-        await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in
-            // Never resumes — daemon runs until killed
-        }
+        dispatchMain()
     }
 
     private static func processDetectedFile(path: String, notify: Bool) async {
