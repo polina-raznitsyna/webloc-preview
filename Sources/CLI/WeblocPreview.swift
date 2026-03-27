@@ -11,6 +11,7 @@ struct WeblocPreview: AsyncParsableCommand {
             StopCommand.self,
             StatusCommand.self,
             CleanupCommand.self,
+            SetupTelegramCommand.self,
         ]
     )
 }

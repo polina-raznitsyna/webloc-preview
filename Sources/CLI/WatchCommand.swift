@@ -54,6 +54,18 @@ struct WatchCommand: AsyncParsableCommand {
         }
     }
 
+    private static func isGenericTitle(_ title: String?, for url: URL) -> Bool {
+        guard let title = title else { return false }
+        let pathComponents = url.pathComponents.filter { $0 != "/" }
+        guard pathComponents.count >= 2 else { return false }
+        let domain = (url.host ?? "").lowercased().replacingOccurrences(of: "www.", with: "")
+        let domainBase = domain.split(separator: ".").first.map(String.init) ?? domain
+        let titleLower = title.lowercased()
+        return titleLower.contains(domainBase) && titleLower.contains("магазин")
+            || titleLower.contains("checking")
+            || titleLower.contains("just a moment")
+    }
+
     private static func processDetectedFile(path: String, notify: Bool) async {
         let fileURL = URL(fileURLWithPath: path)
 
@@ -78,7 +90,15 @@ struct WatchCommand: AsyncParsableCommand {
                 }
             }
 
-            // 2: HTTP fallback
+            // 2: Telegram API
+            if title == nil || title == pageURL.absoluteString || isGenericTitle(title, for: pageURL) {
+                if let tg = await TelegramFetcher.fetch(url: pageURL) {
+                    if !tg.title.isEmpty { title = tg.title }
+                    if imageData == nil, let img = tg.imageData { imageData = img }
+                }
+            }
+
+            // 3: HTTP fallback
             if title == nil || title == pageURL.absoluteString {
                 if let metadata = try? await MetadataFetcher.fetch(url: pageURL), !metadata.isAntiBot {
                     title = metadata.title
@@ -91,7 +111,7 @@ struct WatchCommand: AsyncParsableCommand {
                 }
             }
 
-            // 3: WebKit fallback
+            // 5: WebKit fallback
             if title == nil || title!.hasPrefix("http") {
                 if let wk = try? await ScreenshotService.shared.fetchMetadataViaWebKit(url: pageURL),
                    !wk.isAntiBot, !wk.title.hasPrefix("http") {
@@ -99,17 +119,17 @@ struct WatchCommand: AsyncParsableCommand {
                 }
             }
 
-            // 4: URL slug
+            // 6: URL slug
             if title == nil || title!.hasPrefix("http") {
                 title = MetadataFetcher.titleFromURL(pageURL)
             }
 
-            // 5: Screenshot fallback
+            // 7: Screenshot fallback
             if imageData == nil {
                 imageData = try? await ScreenshotService.shared.takeScreenshot(of: pageURL)
             }
 
-            // 6: Google favicon
+            // 8: Google favicon
             if faviconData == nil, let gf = MetadataFetcher.googleFaviconURL(for: domain) {
                 faviconData = await MetadataFetcher.downloadImage(url: gf)
             }

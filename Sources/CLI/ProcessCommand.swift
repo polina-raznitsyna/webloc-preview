@@ -36,6 +36,22 @@ struct ProcessCommand: AsyncParsableCommand {
         }
     }
 
+    /// Detect when LP returned a generic homepage title for a deep URL.
+    /// e.g. WB returns "Интернет-магазин Wildberries..." for /catalog/564575849/detail.aspx
+    private func isGenericTitle(_ title: String?, for url: URL) -> Bool {
+        guard let title = title else { return false }
+        // Only applies to URLs with a meaningful path (not homepage)
+        let pathComponents = url.pathComponents.filter { $0 != "/" }
+        guard pathComponents.count >= 2 else { return false }
+        // If domain name (or its common part) appears in the title, it's likely a homepage title
+        let domain = (url.host ?? "").lowercased().replacingOccurrences(of: "www.", with: "")
+        let domainBase = domain.split(separator: ".").first.map(String.init) ?? domain
+        let titleLower = title.lowercased()
+        return titleLower.contains(domainBase) && titleLower.contains("магазин")
+            || titleLower.contains("checking")
+            || titleLower.contains("just a moment")
+    }
+
     private func processFile(_ fileURL: URL) async {
         do {
             if !force && ProcessingMarker.isProcessed(fileURL) {
@@ -60,7 +76,20 @@ struct ProcessCommand: AsyncParsableCommand {
                 print("  LP: title=\(title ?? "nil"), img=\(imageData != nil), icon=\(faviconData != nil)")
             }
 
-            // 2. HTTP + SwiftSoup (non-throwing)
+            // 2. Telegram API (fast, handles anti-bot sites)
+            if title == nil || title == pageURL.absoluteString || isGenericTitle(title, for: pageURL) {
+                if let tg = await TelegramFetcher.fetch(url: pageURL) {
+                    if !tg.title.isEmpty {
+                        title = tg.title
+                    }
+                    if imageData == nil, let img = tg.imageData {
+                        imageData = img
+                    }
+                    print("  TG: title=\(tg.title), img=\(tg.imageData != nil)")
+                }
+            }
+
+            // 3. HTTP + SwiftSoup (non-throwing)
             if title == nil || title == pageURL.absoluteString {
                 if let http = try? await MetadataFetcher.fetch(url: pageURL), !http.isAntiBot {
                     title = http.title
@@ -69,7 +98,7 @@ struct ProcessCommand: AsyncParsableCommand {
                 }
             }
 
-            // 3. WebKit with polling (waits for JS challenges to resolve, up to 22s)
+            // 5. WebKit with polling (waits for JS challenges to resolve, up to 22s)
             if title == nil || title!.hasPrefix("http") || title == pageURL.absoluteString {
                 print("  Trying WebKit (polling)...")
                 if let wk = try? await ScreenshotService.shared.fetchMetadataViaWebKit(url: pageURL),
@@ -81,23 +110,23 @@ struct ProcessCommand: AsyncParsableCommand {
                 }
             }
 
-            // 4. URL slug as last resort for title
+            // 6. URL slug as last resort for title
             if title == nil || title!.hasPrefix("http") || title == pageURL.absoluteString {
                 title = MetadataFetcher.titleFromURL(pageURL)
                 print("  URL slug: \(title!)")
             }
 
-            // 5. Screenshot if no image
+            // 7. Screenshot if no image
             if imageData == nil {
                 imageData = try? await ScreenshotService.shared.takeScreenshot(of: pageURL)
             }
 
-            // 6. Google favicon fallback
+            // 8. Google favicon fallback
             if faviconData == nil, let gf = MetadataFetcher.googleFaviconURL(for: domain) {
                 faviconData = await MetadataFetcher.downloadImage(url: gf)
             }
 
-            // 7. Render and apply
+            // 9. Render and apply
             let cleanedTitle = MetadataFetcher.cleanTitle(title!)
             let card = try CardRenderer.render(domain: domain, imageData: imageData, faviconData: faviconData)
             _ = IconSetter.setIcon(card, for: fileURL)
