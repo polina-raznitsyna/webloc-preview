@@ -75,26 +75,23 @@ struct WatchCommand: AsyncParsableCommand {
             let pageURL = try WeblocFile.readURL(from: fileURL)
             let domain = WeblocFile.domain(from: pageURL)
 
-            // 1: LinkPresentation (Apple Notes engine)
-            MetadataFetcher._lastLPResult = nil
             var title: String? = nil
             var imageData: Data? = nil
             var faviconData: Data? = nil
 
-            if let lpMeta = await MetadataFetcher.fetchViaLinkPresentation(url: pageURL) {
-                let lpResult = MetadataFetcher._lastLPResult
-                if !lpMeta.isAntiBot {
-                    title = lpMeta.title
-                    imageData = lpResult?.imageData
-                    faviconData = lpResult?.iconData
-                }
+            // 1: Telegram API (primary)
+            if let tg = await TelegramFetcher.fetch(url: pageURL), !tg.title.isEmpty {
+                title = tg.title
+                imageData = tg.imageData
             }
 
-            // 2: Telegram API
-            if title == nil || title == pageURL.absoluteString || isGenericTitle(title, for: pageURL) {
-                if let tg = await TelegramFetcher.fetch(url: pageURL) {
-                    if !tg.title.isEmpty { title = tg.title }
-                    if imageData == nil, let img = tg.imageData { imageData = img }
+            // 2: LinkPresentation (fallback)
+            if title == nil || title == pageURL.absoluteString {
+                MetadataFetcher._lastLPResult = nil
+                if let lpMeta = await MetadataFetcher.fetchViaLinkPresentation(url: pageURL), !lpMeta.isAntiBot {
+                    if title == nil { title = lpMeta.title }
+                    if imageData == nil { imageData = MetadataFetcher._lastLPResult?.imageData }
+                    faviconData = MetadataFetcher._lastLPResult?.iconData
                 }
             }
 

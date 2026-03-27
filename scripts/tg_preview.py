@@ -66,6 +66,14 @@ async def check():
     await client.disconnect()
 
 
+def clean_url(url):
+    """Strip tracking query params that break Telegram preview resolution."""
+    from urllib.parse import urlparse, urlunparse
+    parsed = urlparse(url)
+    # Remove query string entirely — most product URLs work without it
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+
+
 async def fetch(url):
     """Fetch web page preview via Telegram API. Returns JSON."""
     config = load_config()
@@ -76,6 +84,10 @@ async def fetch(url):
     from telethon import TelegramClient
     from telethon.tl.functions.messages import GetWebPagePreviewRequest
 
+    # Try clean URL first, fall back to original if no result
+    clean = clean_url(url)
+    urls_to_try = [clean, url] if clean != url else [url]
+
     client = TelegramClient(SESSION_PATH, config["api_id"], config["api_hash"])
     await client.connect()
 
@@ -85,14 +97,16 @@ async def fetch(url):
         return
 
     try:
-        result = await client(GetWebPagePreviewRequest(message=url))
-
-        # Navigate: result.media.webpage (WebPagePreview → MessageMediaWebPage → WebPage)
         wp = None
-        if hasattr(result, "media") and hasattr(result.media, "webpage"):
-            wp = result.media.webpage
-        elif hasattr(result, "webpage"):
-            wp = result.webpage
+        for try_url in urls_to_try:
+            result = await client(GetWebPagePreviewRequest(message=try_url))
+            if hasattr(result, "media") and hasattr(result.media, "webpage"):
+                wp = result.media.webpage
+            elif hasattr(result, "webpage"):
+                wp = result.webpage
+            if wp and hasattr(wp, "title") and wp.title:
+                break
+            wp = None
 
         if not wp or not hasattr(wp, "title"):
             print(json.dumps({"error": "no_preview"}))

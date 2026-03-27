@@ -67,29 +67,25 @@ struct ProcessCommand: AsyncParsableCommand {
             var imageData: Data? = nil
             var faviconData: Data? = nil
 
-            // 1. LinkPresentation (Apple Notes engine)
-            MetadataFetcher._lastLPResult = nil
-            if let lp = await MetadataFetcher.fetchViaLinkPresentation(url: pageURL), !lp.isAntiBot {
-                title = lp.title
-                imageData = MetadataFetcher._lastLPResult?.imageData
-                faviconData = MetadataFetcher._lastLPResult?.iconData
-                print("  LP: title=\(title ?? "nil"), img=\(imageData != nil), icon=\(faviconData != nil)")
+            // 1. Telegram API (primary — fast, handles anti-bot)
+            if let tg = await TelegramFetcher.fetch(url: pageURL), !tg.title.isEmpty {
+                title = tg.title
+                imageData = tg.imageData
+                print("  TG: title=\(tg.title), img=\(tg.imageData != nil)")
             }
 
-            // 2. Telegram API (fast, handles anti-bot sites)
-            if title == nil || title == pageURL.absoluteString || isGenericTitle(title, for: pageURL) {
-                if let tg = await TelegramFetcher.fetch(url: pageURL) {
-                    if !tg.title.isEmpty {
-                        title = tg.title
-                    }
-                    if imageData == nil, let img = tg.imageData {
-                        imageData = img
-                    }
-                    print("  TG: title=\(tg.title), img=\(tg.imageData != nil)")
+            // 2. LinkPresentation (fallback if TG unavailable/failed)
+            if title == nil || title == pageURL.absoluteString {
+                MetadataFetcher._lastLPResult = nil
+                if let lp = await MetadataFetcher.fetchViaLinkPresentation(url: pageURL), !lp.isAntiBot {
+                    if title == nil { title = lp.title }
+                    if imageData == nil { imageData = MetadataFetcher._lastLPResult?.imageData }
+                    faviconData = MetadataFetcher._lastLPResult?.iconData
+                    print("  LP: title=\(title ?? "nil"), img=\(imageData != nil), icon=\(faviconData != nil)")
                 }
             }
 
-            // 3. HTTP + SwiftSoup (non-throwing)
+            // 3. HTTP + SwiftSoup
             if title == nil || title == pageURL.absoluteString {
                 if let http = try? await MetadataFetcher.fetch(url: pageURL), !http.isAntiBot {
                     title = http.title
@@ -98,7 +94,7 @@ struct ProcessCommand: AsyncParsableCommand {
                 }
             }
 
-            // 5. WebKit with polling (waits for JS challenges to resolve, up to 22s)
+            // 4. WebKit with polling (waits for JS challenges to resolve, up to 22s)
             if title == nil || title!.hasPrefix("http") || title == pageURL.absoluteString {
                 print("  Trying WebKit (polling)...")
                 if let wk = try? await ScreenshotService.shared.fetchMetadataViaWebKit(url: pageURL),
