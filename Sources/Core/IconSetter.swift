@@ -12,7 +12,7 @@ public struct IconSetter {
     public static func renameFile(at fileURL: URL, title: String) throws -> URL {
         let newName = newFilename(title: title)
         let dir = fileURL.deletingLastPathComponent()
-        let resolvedName = resolveFilename(name: newName, in: dir)
+        let resolvedName = resolveFilename(name: newName, in: dir, excluding: fileURL)
         let newURL = dir.appendingPathComponent(resolvedName)
 
         if newURL.path != fileURL.path {
@@ -30,10 +30,13 @@ public struct IconSetter {
         return truncated + suffix
     }
 
-    /// If filename exists, append (2), (3), etc.
-    public static func resolveFilename(name: String, in directory: URL) -> String {
+    /// If filename exists (other than the source file), append (2), (3), etc.
+    public static func resolveFilename(name: String, in directory: URL, excluding sourceFile: URL? = nil) -> String {
         let fm = FileManager.default
-        if !fm.fileExists(atPath: directory.appendingPathComponent(name).path) {
+        let targetPath = directory.appendingPathComponent(name).path
+
+        // If nothing exists at target, or it's the source file itself — use as-is
+        if !fm.fileExists(atPath: targetPath) || targetPath == sourceFile?.path {
             return name
         }
 
@@ -43,7 +46,8 @@ public struct IconSetter {
         var counter = 2
         while true {
             let candidate = "\(base) (\(counter)).\(ext)"
-            if !fm.fileExists(atPath: directory.appendingPathComponent(candidate).path) {
+            let candidatePath = directory.appendingPathComponent(candidate).path
+            if !fm.fileExists(atPath: candidatePath) || candidatePath == sourceFile?.path {
                 return candidate
             }
             counter += 1

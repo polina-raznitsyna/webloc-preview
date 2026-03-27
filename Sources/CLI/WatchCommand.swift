@@ -69,31 +69,27 @@ struct WatchCommand: AsyncParsableCommand {
 
             // 1: Telegram API
             if let tg = await TelegramFetcher.fetch(url: pageURL), !tg.title.isEmpty {
-                title = tg.title
+                title = MetadataFetcher.cleanTitle(tg.title)
                 imageData = tg.imageData
             }
 
-            // 2: URL slug as last resort
-            if title == nil || title!.hasPrefix("http") || title == pageURL.absoluteString {
-                title = MetadataFetcher.titleFromURL(pageURL)
-            }
-
-            // 3: Screenshot if no image
+            // 2: Screenshot if no image
             if imageData == nil {
                 imageData = try? await ScreenshotService.shared.takeScreenshot(of: pageURL)
             }
 
-            // 4: Google favicon
+            // 3: Google favicon
             if let gf = MetadataFetcher.googleFaviconURL(for: domain) {
                 faviconData = await MetadataFetcher.downloadImage(url: gf)
             }
 
-            let cleanedTitle = MetadataFetcher.cleanTitle(title!)
             let card = try CardRenderer.render(
                 domain: domain, imageData: imageData, faviconData: faviconData
             )
             _ = IconSetter.setIcon(card, for: fileURL)
-            let newURL = try IconSetter.renameFile(at: fileURL, title: cleanedTitle)
+            let newURL = title != nil
+                ? try IconSetter.renameFile(at: fileURL, title: title!)
+                : fileURL
             try ProcessingMarker.markProcessed(newURL)
 
             Logger.log("Processed: \(newURL.lastPathComponent)")

@@ -53,32 +53,27 @@ struct ProcessCommand: AsyncParsableCommand {
 
             // 1. Telegram API
             if let tg = await TelegramFetcher.fetch(url: pageURL), !tg.title.isEmpty {
-                title = tg.title
+                title = MetadataFetcher.cleanTitle(tg.title)
                 imageData = tg.imageData
-                print("  TG: title=\(tg.title), img=\(tg.imageData != nil)")
+                print("  TG: title=\(title!), img=\(tg.imageData != nil)")
             }
 
-            // 2. URL slug as last resort for title
-            if title == nil || title!.hasPrefix("http") || title == pageURL.absoluteString {
-                title = MetadataFetcher.titleFromURL(pageURL)
-                print("  URL slug: \(title!)")
-            }
-
-            // 3. Screenshot if no image
+            // 2. Screenshot if no image
             if imageData == nil {
                 imageData = try? await ScreenshotService.shared.takeScreenshot(of: pageURL)
             }
 
-            // 4. Google favicon
+            // 3. Google favicon
             if let gf = MetadataFetcher.googleFaviconURL(for: domain) {
                 faviconData = await MetadataFetcher.downloadImage(url: gf)
             }
 
-            // 5. Render and apply
-            let cleanedTitle = MetadataFetcher.cleanTitle(title!)
+            // 4. Render and apply (only rename if we got a title)
             let card = try CardRenderer.render(domain: domain, imageData: imageData, faviconData: faviconData)
             _ = IconSetter.setIcon(card, for: fileURL)
-            let newURL = try IconSetter.renameFile(at: fileURL, title: cleanedTitle)
+            let newURL = title != nil
+                ? try IconSetter.renameFile(at: fileURL, title: title!)
+                : fileURL
             try ProcessingMarker.markProcessed(newURL)
             print("  -> \(newURL.lastPathComponent)")
             Logger.log("Processed: \(newURL.lastPathComponent)")
