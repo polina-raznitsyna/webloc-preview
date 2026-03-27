@@ -54,18 +54,6 @@ struct WatchCommand: AsyncParsableCommand {
         }
     }
 
-    private static func isGenericTitle(_ title: String?, for url: URL) -> Bool {
-        guard let title = title else { return false }
-        let pathComponents = url.pathComponents.filter { $0 != "/" }
-        guard pathComponents.count >= 2 else { return false }
-        let domain = (url.host ?? "").lowercased().replacingOccurrences(of: "www.", with: "")
-        let domainBase = domain.split(separator: ".").first.map(String.init) ?? domain
-        let titleLower = title.lowercased()
-        return titleLower.contains(domainBase) && titleLower.contains("магазин")
-            || titleLower.contains("checking")
-            || titleLower.contains("just a moment")
-    }
-
     private static func processDetectedFile(path: String, notify: Bool) async {
         let fileURL = URL(fileURLWithPath: path)
 
@@ -79,55 +67,24 @@ struct WatchCommand: AsyncParsableCommand {
             var imageData: Data? = nil
             var faviconData: Data? = nil
 
-            // 1: Telegram API (primary)
+            // 1: Telegram API
             if let tg = await TelegramFetcher.fetch(url: pageURL), !tg.title.isEmpty {
                 title = tg.title
                 imageData = tg.imageData
             }
 
-            // 2: LinkPresentation (fallback)
-            if title == nil || title == pageURL.absoluteString {
-                MetadataFetcher._lastLPResult = nil
-                if let lpMeta = await MetadataFetcher.fetchViaLinkPresentation(url: pageURL), !lpMeta.isAntiBot {
-                    if title == nil { title = lpMeta.title }
-                    if imageData == nil { imageData = MetadataFetcher._lastLPResult?.imageData }
-                    faviconData = MetadataFetcher._lastLPResult?.iconData
-                }
-            }
-
-            // 3: HTTP fallback
-            if title == nil || title == pageURL.absoluteString {
-                if let metadata = try? await MetadataFetcher.fetch(url: pageURL), !metadata.isAntiBot {
-                    title = metadata.title
-                    if imageData == nil, let imageURL = metadata.imageURL {
-                        imageData = await MetadataFetcher.downloadImage(url: imageURL)
-                    }
-                    if faviconData == nil, let faviconURL = metadata.faviconURL {
-                        faviconData = await MetadataFetcher.downloadImage(url: faviconURL)
-                    }
-                }
-            }
-
-            // 5: WebKit fallback
-            if title == nil || title!.hasPrefix("http") {
-                if let wk = try? await ScreenshotService.shared.fetchMetadataViaWebKit(url: pageURL),
-                   !wk.isAntiBot, !wk.title.hasPrefix("http") {
-                    title = wk.title
-                }
-            }
-
-            // 6: URL slug
-            if title == nil || title!.hasPrefix("http") {
+            // 2: URL slug as last resort
+            if title == nil || title!.hasPrefix("http") || title == pageURL.absoluteString {
                 title = MetadataFetcher.titleFromURL(pageURL)
             }
 
-            // 7: Screenshot fallback
+            // 3: Screenshot if no image
             if imageData == nil {
                 imageData = try? await ScreenshotService.shared.takeScreenshot(of: pageURL)
             }
 
-            // 8: Google favicon
-            if faviconData == nil, let gf = MetadataFetcher.googleFaviconURL(for: domain) {
+            // 4: Google favicon
+            if let gf = MetadataFetcher.googleFaviconURL(for: domain) {
                 faviconData = await MetadataFetcher.downloadImage(url: gf)
             }
 
