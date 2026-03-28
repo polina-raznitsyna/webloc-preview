@@ -41,16 +41,17 @@ struct WatchCommand: AsyncParsableCommand {
 
         Logger.log("Starting watch for: \(resolvedPaths.joined(separator: ", "))")
 
+        // Serial queue: files are processed one at a time to avoid
+        // concurrent Telegram session access (SQLite locking)
+        let (stream, continuation) = AsyncStream.makeStream(of: String.self)
+
         let watcher = FileWatcher(paths: resolvedPaths, exclusions: exclude) { path in
-            Task {
-                await Self.processDetectedFile(path: path, notify: notify)
-            }
+            continuation.yield(path)
         }
         watcher.start()
 
-        // Block forever — keep the daemon running
-        while true {
-            try? await Task.sleep(nanoseconds: 3_600_000_000_000) // wake up every hour
+        for await path in stream {
+            await Self.processDetectedFile(path: path, notify: notify)
         }
     }
 
