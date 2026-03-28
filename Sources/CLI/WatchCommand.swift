@@ -57,6 +57,7 @@ struct WatchCommand: AsyncParsableCommand {
     private static func processDetectedFile(path: String, notify: Bool) async {
         let fileURL = URL(fileURLWithPath: path)
 
+        guard FileManager.default.fileExists(atPath: path) else { return }
         guard !ProcessingMarker.isProcessed(fileURL) else { return }
 
         do {
