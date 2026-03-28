@@ -7,119 +7,110 @@ public struct TelegramPreview: Sendable {
     public let imageData: Data?
 }
 
-public struct TelegramFetcher {
+/// Result of a Telegram fetch attempt.
+public enum TelegramFetchResult: Sendable {
+    /// Got metadata from Telegram
+    case success(TelegramPreview)
+    /// Telegram genuinely has no preview for this URL
+    case noPreview
+    /// Temporary failure (rate limit, connection issue) — should retry later
+    case temporaryError
+}
+
+/// Manages a long-running Python daemon that keeps a persistent Telegram connection.
+/// Telethon handles FloodWait automatically (up to 2 min).
+public final class TelegramFetcher: @unchecked Sendable {
+    public static let shared = TelegramFetcher()
+
+    private var process: Process?
+    private var toStdin: FileHandle?
+    private var fromStdout: FileHandle?
+    private let lock = NSLock()
+    private var ready = false
+
     private static let configDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".webloc-preview")
     private static let venvPython = configDir.appendingPathComponent("venv/bin/python3").path
+    private static let scriptPath = configDir.appendingPathComponent("tg_preview.py").path
     private static let configFile = configDir.appendingPathComponent("tg_config.json").path
 
-    /// Path to the Python helper script (in the package's scripts/ dir or next to the binary)
-    private static var scriptPath: String {
-        // Look relative to executable
-        let execURL = URL(fileURLWithPath: ProcessInfo.processInfo.arguments[0])
-        let candidates = [
-            execURL.deletingLastPathComponent().appendingPathComponent("../scripts/tg_preview.py").path,
-            execURL.deletingLastPathComponent().appendingPathComponent("tg_preview.py").path,
-            configDir.appendingPathComponent("tg_preview.py").path,
-        ]
-        // Also check the source repo location
-        let repoScript = execURL.deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("scripts/tg_preview.py").path
-
-        for path in candidates + [repoScript] {
-            if FileManager.default.fileExists(atPath: path) {
-                return path
-            }
-        }
-        // Fallback: assume it's installed alongside the binary
-        return configDir.appendingPathComponent("tg_preview.py").path
-    }
-
-    /// Check if Telegram integration is configured and authorized.
+    /// Check if Telegram integration is configured.
     public static var isConfigured: Bool {
         FileManager.default.fileExists(atPath: configFile)
     }
 
-    /// Fetch metadata via Telegram's getWebPagePreview.
-    /// Returns nil if Telegram is not configured or fetch fails.
-    public static func fetch(url: URL) async -> TelegramPreview? {
-        guard isConfigured else { return nil }
+    /// Fetch metadata via Telegram. Retries on rate limits.
+    public func fetch(url: URL, maxRetries: Int = 3) -> TelegramFetchResult {
+        guard Self.isConfigured else { return .noPreview }
 
-        guard let result = runScript(args: ["fetch", url.absoluteString]) else {
-            return nil
+        lock.lock()
+        defer { lock.unlock() }
+
+        for attempt in 0..<maxRetries {
+            guard ensureRunning() else { return .temporaryError }
+
+            // Send URL to daemon
+            let line = url.absoluteString + "\n"
+            guard let data = line.data(using: .utf8) else { return .temporaryError }
+            toStdin?.write(data)
+
+            // Read response
+            guard let response = readLine(),
+                  let jsonData = response.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+                // Daemon crashed — restart and retry
+                stop()
+                continue
+            }
+
+            // Check for errors
+            if let error = json["error"] as? String {
+                if error == "flood_wait" {
+                    // Telethon couldn't auto-handle (> 2 min wait)
+                    let seconds = json["seconds"] as? Int ?? 30
+                    if attempt < maxRetries - 1 {
+                        Thread.sleep(forTimeInterval: Double(seconds) + 1)
+                        continue
+                    }
+                    return .temporaryError
+                }
+                if error == "no_preview" {
+                    return .noPreview
+                }
+                // Other error — might be temporary
+                return .temporaryError
+            }
+
+            // Parse success
+            let title = json["title"] as? String ?? ""
+            guard !title.isEmpty else { return .noPreview }
+
+            var imageData: Data? = nil
+            if let imagePath = json["image_path"] as? String {
+                imageData = FileManager.default.contents(atPath: imagePath)
+                try? FileManager.default.removeItem(atPath: imagePath)
+            }
+
+            return .success(TelegramPreview(
+                title: title,
+                description: json["description"] as? String ?? "",
+                siteName: json["site_name"] as? String ?? "",
+                imageData: imageData
+            ))
         }
 
-        guard let data = result.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              json["error"] == nil else {
-            return nil
-        }
-
-        let title = json["title"] as? String ?? ""
-        let description = json["description"] as? String ?? ""
-        let siteName = json["site_name"] as? String ?? ""
-
-        guard !title.isEmpty else { return nil }
-
-        // Load image if path provided
-        var imageData: Data? = nil
-        if let imagePath = json["image_path"] as? String {
-            imageData = FileManager.default.contents(atPath: imagePath)
-            // Clean up temp file
-            try? FileManager.default.removeItem(atPath: imagePath)
-        }
-
-        return TelegramPreview(
-            title: title,
-            description: description,
-            siteName: siteName,
-            imageData: imageData
-        )
-    }
-
-    /// Run the Python script with given arguments. Returns stdout as string.
-    private static func runScript(args: [String]) -> String? {
-        let python = FileManager.default.fileExists(atPath: venvPython)
-            ? venvPython
-            : "/usr/bin/python3"
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: python)
-        process.arguments = [scriptPath] + args
-        process.environment = ProcessInfo.processInfo.environment
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return nil
-        }
-
-        guard process.terminationStatus == 0 else { return nil }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return .temporaryError
     }
 
     /// Run interactive auth. Used by setup-telegram command.
     public static func runAuth() -> Bool {
-        let python = FileManager.default.fileExists(atPath: venvPython)
-            ? venvPython
-            : "/usr/bin/python3"
-
+        let python = FileManager.default.fileExists(atPath: venvPython) ? venvPython : "/usr/bin/python3"
         let process = Process()
         process.executableURL = URL(fileURLWithPath: python)
         process.arguments = [scriptPath, "auth"]
         process.standardInput = FileHandle.standardInput
         process.standardOutput = FileHandle.standardOutput
         process.standardError = FileHandle.standardError
-
         do {
             try process.run()
             process.waitUntilExit()
@@ -128,5 +119,71 @@ public struct TelegramFetcher {
             print("Failed to run auth: \(error.localizedDescription)")
             return false
         }
+    }
+
+    // MARK: - Daemon lifecycle
+
+    private func ensureRunning() -> Bool {
+        if let p = process, p.isRunning, ready { return true }
+        stop()
+        return start()
+    }
+
+    private func start() -> Bool {
+        let python = FileManager.default.fileExists(atPath: Self.venvPython)
+            ? Self.venvPython : "/usr/bin/python3"
+        guard FileManager.default.fileExists(atPath: Self.scriptPath) else { return false }
+
+        let stdinPipe = Pipe()
+        let stdoutPipe = Pipe()
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: python)
+        proc.arguments = [Self.scriptPath, "daemon"]
+        proc.standardInput = stdinPipe
+        proc.standardOutput = stdoutPipe
+        proc.standardError = FileHandle.nullDevice
+
+        do {
+            try proc.run()
+        } catch {
+            return false
+        }
+
+        self.process = proc
+        self.toStdin = stdinPipe.fileHandleForWriting
+        self.fromStdout = stdoutPipe.fileHandleForReading
+
+        // Wait for "ready" signal (daemon connected to Telegram)
+        guard let line = readLine(),
+              let data = line.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["status"] as? String == "ready" else {
+            stop()
+            return false
+        }
+
+        self.ready = true
+        return true
+    }
+
+    private func stop() {
+        process?.terminate()
+        process = nil
+        toStdin = nil
+        fromStdout = nil
+        ready = false
+    }
+
+    private func readLine() -> String? {
+        guard let handle = fromStdout else { return nil }
+        var data = Data()
+        while true {
+            let byte = handle.readData(ofLength: 1)
+            if byte.isEmpty { return nil } // EOF / daemon crashed
+            if byte[0] == UInt8(ascii: "\n") { break }
+            data.append(byte)
+        }
+        return String(data: data, encoding: .utf8)
     }
 }

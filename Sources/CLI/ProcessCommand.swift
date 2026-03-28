@@ -50,12 +50,26 @@ struct ProcessCommand: AsyncParsableCommand {
             var title: String? = nil
             var imageData: Data? = nil
             var faviconData: Data? = nil
+            var tgTemporaryFailure = false
 
             // 1. Telegram API
-            if let tg = await TelegramFetcher.fetch(url: pageURL), !tg.title.isEmpty {
+            let tgResult = TelegramFetcher.shared.fetch(url: pageURL)
+            switch tgResult {
+            case .success(let tg):
                 title = MetadataFetcher.cleanTitle(tg.title)
                 imageData = tg.imageData
                 print("  TG: title=\(title!), img=\(tg.imageData != nil)")
+            case .noPreview:
+                print("  TG: no preview available")
+            case .temporaryError:
+                print("  TG: temporary error (rate limit?) — will retry later")
+                tgTemporaryFailure = true
+            }
+
+            // If TG had a temporary failure, skip this file — don't apply fallback
+            if tgTemporaryFailure {
+                Logger.log("Deferred (TG rate limit): \(fileURL.lastPathComponent)")
+                return
             }
 
             // 2. Screenshot if no image

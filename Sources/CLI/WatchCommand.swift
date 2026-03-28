@@ -41,8 +41,7 @@ struct WatchCommand: AsyncParsableCommand {
 
         Logger.log("Starting watch for: \(resolvedPaths.joined(separator: ", "))")
 
-        // Serial queue: files are processed one at a time to avoid
-        // concurrent Telegram session access (SQLite locking)
+        // Serial queue: files processed one at a time
         let (stream, continuation) = AsyncStream.makeStream(of: String.self)
 
         let watcher = FileWatcher(paths: resolvedPaths, exclusions: exclude) { path in
@@ -51,15 +50,24 @@ struct WatchCommand: AsyncParsableCommand {
         watcher.start()
 
         for await path in stream {
-            await Self.processDetectedFile(path: path, notify: notify)
+            let shouldRetry = await Self.processDetectedFile(path: path, notify: notify)
+            if shouldRetry {
+                // Re-queue after a delay so Telegram rate limit can recover
+                Task {
+                    try? await Task.sleep(nanoseconds: 30_000_000_000) // 30s
+                    continuation.yield(path)
+                }
+            }
         }
     }
 
-    private static func processDetectedFile(path: String, notify: Bool) async {
+    /// Returns true if file should be retried later (TG temporary failure).
+    @discardableResult
+    private static func processDetectedFile(path: String, notify: Bool) async -> Bool {
         let fileURL = URL(fileURLWithPath: path)
 
-        guard FileManager.default.fileExists(atPath: path) else { return }
-        guard !ProcessingMarker.isProcessed(fileURL) else { return }
+        guard FileManager.default.fileExists(atPath: path) else { return false }
+        guard !ProcessingMarker.isProcessed(fileURL) else { return false }
 
         do {
             let pageURL = try WeblocFile.readURL(from: fileURL)
@@ -70,9 +78,16 @@ struct WatchCommand: AsyncParsableCommand {
             var faviconData: Data? = nil
 
             // 1: Telegram API
-            if let tg = await TelegramFetcher.fetch(url: pageURL), !tg.title.isEmpty {
+            let tgResult = TelegramFetcher.shared.fetch(url: pageURL)
+            switch tgResult {
+            case .success(let tg):
                 title = MetadataFetcher.cleanTitle(tg.title)
                 imageData = tg.imageData
+            case .noPreview:
+                break
+            case .temporaryError:
+                Logger.log("Deferred (TG rate limit): \(fileURL.lastPathComponent)")
+                return true // retry later
             }
 
             // 2: Screenshot if no image
@@ -102,6 +117,7 @@ struct WatchCommand: AsyncParsableCommand {
         } catch {
             Logger.error("Failed: \(path) — \(error.localizedDescription)")
         }
+        return false
     }
 
     private static func sendNotification(title: String, body: String) {
