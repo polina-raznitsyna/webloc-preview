@@ -151,7 +151,7 @@ public struct CardRenderer {
         if let faviconData = faviconData, let favicon = NSImage(data: faviconData) {
             let favRect = NSRect(
                 x: footerX,
-                y: footerY + (footH - favSz) / 2,
+                y: footerY + (footH - favSz) / 2 - 2 * s,
                 width: favSz, height: favSz
             )
             cg.saveGState()
