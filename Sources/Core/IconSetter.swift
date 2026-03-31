@@ -55,9 +55,11 @@ public struct IconSetter {
     }
 
     private static func sanitize(_ name: String) -> String {
-        let forbidden = CharacterSet(charactersIn: "/:\\")
-        return name.unicodeScalars.filter { !forbidden.contains($0) }
+        var result = name.replacingOccurrences(of: "/", with: " ")
+        let forbidden = CharacterSet(charactersIn: ":\\")
+        result = result.unicodeScalars.filter { !forbidden.contains($0) }
             .map(String.init).joined()
+        return result
     }
 
     private static func truncateToUTF8(_ string: String, maxBytes: Int) -> String {
