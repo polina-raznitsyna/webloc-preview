@@ -50,26 +50,26 @@ struct ProcessCommand: AsyncParsableCommand {
             var title: String? = nil
             var imageData: Data? = nil
             var faviconData: Data? = nil
-            var tgTemporaryFailure = false
 
-            // 1. Telegram API
-            let tgResult = TelegramFetcher.shared.fetch(url: pageURL)
-            switch tgResult {
-            case .success(let tg):
-                title = MetadataFetcher.cleanTitle(tg.title)
-                imageData = tg.imageData
-                print("  TG: title=\(title!), img=\(tg.imageData != nil)")
-            case .noPreview:
-                print("  TG: no preview available")
-            case .temporaryError:
-                print("  TG: temporary error (rate limit?) — will retry later")
-                tgTemporaryFailure = true
-            }
-
-            // If TG had a temporary failure, skip this file — don't apply fallback
-            if tgTemporaryFailure {
-                Logger.log("Deferred (TG rate limit): \(fileURL.lastPathComponent)")
-                return
+            // 1. Telegram API (retry up to 3 times on temporary errors)
+            for attempt in 1...3 {
+                let tgResult = TelegramFetcher.shared.fetch(url: pageURL)
+                switch tgResult {
+                case .success(let tg):
+                    title = MetadataFetcher.cleanTitle(tg.title)
+                    imageData = tg.imageData
+                    print("  TG: title=\(title!), img=\(tg.imageData != nil)")
+                case .noPreview:
+                    print("  TG: no preview available")
+                case .temporaryError:
+                    if attempt < 3 {
+                        print("  TG: temporary error, retrying in 10s... (\(attempt)/3)")
+                        try? await Task.sleep(nanoseconds: 10_000_000_000)
+                        continue
+                    }
+                    print("  TG: temporary error after 3 attempts, skipping")
+                }
+                break
             }
 
             // 2. Screenshot if no image
