@@ -15,11 +15,17 @@ SESSION_PATH = os.path.join(CONFIG_DIR, "tg_session")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "tg_config.json")
 
 
+# Default app credentials (users authenticate with their own phone number)
+DEFAULT_API_ID = 35898591
+DEFAULT_API_HASH = "edbe8d3ce1f9ff80b2371c97cf3f6f84"
+
+
 def load_config():
-    if not os.path.exists(CONFIG_PATH):
-        return None
-    with open(CONFIG_PATH) as f:
-        return json.load(f)
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH) as f:
+            return json.load(f)
+    # Use hardcoded defaults
+    return {"api_id": DEFAULT_API_ID, "api_hash": DEFAULT_API_HASH}
 
 
 def save_config(api_id, api_hash):

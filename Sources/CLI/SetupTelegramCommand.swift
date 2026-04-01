@@ -5,50 +5,27 @@ import Core
 struct SetupTelegramCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "setup-telegram",
-        abstract: "Configure Telegram API for better metadata fetching"
+        abstract: "Authenticate with Telegram for metadata fetching"
     )
 
     func run() throws {
         let configDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".webloc-preview")
-        let configPath = configDir.appendingPathComponent("tg_config.json")
 
-        // Check if already configured
-        if FileManager.default.fileExists(atPath: configPath.path) {
-            print("Telegram is already configured.")
-            print("To reconfigure, delete ~/.webloc-preview/tg_config.json and run again.")
+        // Check if session already exists
+        let sessionPath = configDir.appendingPathComponent("tg_session.session")
+        if FileManager.default.fileExists(atPath: sessionPath.path) {
+            print("Telegram is already set up.")
+            print("To re-authenticate, delete ~/.webloc-preview/tg_session.session and run again.")
             return
         }
 
-        // Save api_id / api_hash
-        print("=== Telegram API Setup ===")
-        print("Get your credentials at https://my.telegram.org → API development tools\n")
-
-        print("api_id: ", terminator: "")
-        guard let apiIdStr = readLine()?.trimmingCharacters(in: .whitespaces),
-              let apiId = Int(apiIdStr) else {
-            print("Invalid api_id")
-            throw ExitCode.failure
-        }
-
-        print("api_hash: ", terminator: "")
-        guard let apiHash = readLine()?.trimmingCharacters(in: .whitespaces),
-              !apiHash.isEmpty else {
-            print("Invalid api_hash")
-            throw ExitCode.failure
-        }
-
-        // Save config
-        try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
-        let config: [String: Any] = ["api_id": apiId, "api_hash": apiHash]
-        let data = try JSONSerialization.data(withJSONObject: config)
-        try data.write(to: configPath)
-        print("Config saved.\n")
-
-        // Check venv
+        // Ensure venv + telethon
         let venvPython = configDir.appendingPathComponent("venv/bin/python3").path
         if !FileManager.default.fileExists(atPath: venvPython) {
             print("Setting up Python environment...")
+            try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
+
             let venv = Process()
             venv.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
             venv.arguments = ["-m", "venv", configDir.appendingPathComponent("venv").path]
@@ -57,21 +34,36 @@ struct SetupTelegramCommand: ParsableCommand {
 
             let pip = Process()
             pip.executableURL = URL(fileURLWithPath: configDir.appendingPathComponent("venv/bin/pip").path)
-            pip.arguments = ["install", "telethon"]
+            pip.arguments = ["install", "-q", "telethon"]
             try pip.run()
             pip.waitUntilExit()
-            print("Telethon installed.\n")
+            print("Done.\n")
+        }
+
+        // Copy script if needed
+        let scriptDst = configDir.appendingPathComponent("tg_preview.py")
+        let execURL = URL(fileURLWithPath: ProcessInfo.processInfo.arguments[0])
+        let candidates = [
+            execURL.deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("scripts/tg_preview.py"),
+        ]
+        for src in candidates {
+            if FileManager.default.fileExists(atPath: src.path) {
+                try? FileManager.default.removeItem(at: scriptDst)
+                try? FileManager.default.copyItem(at: src, to: scriptDst)
+                break
+            }
         }
 
         // Run interactive auth
-        print("Now authenticating with Telegram...")
-        print("You'll need to enter your phone number and a confirmation code.\n")
+        print("=== Telegram Authentication ===")
+        print("You'll enter your phone number and a code from Telegram.\n")
 
         let success = TelegramFetcher.runAuth()
         if success {
-            print("\nTelegram integration ready!")
+            print("\nReady! Telegram metadata will be used automatically.")
         } else {
-            print("\nAuth failed. Try again with: webloc-preview setup-telegram")
+            print("\nFailed. Try again: webloc-preview setup-telegram")
             throw ExitCode.failure
         }
     }

@@ -90,7 +90,15 @@ struct WatchCommand: AsyncParsableCommand {
                 return true // retry later
             }
 
-            // 2: Screenshot if no image
+            // 2: HTTP fallback for title
+            if title == nil {
+                if let http = try? await MetadataFetcher.fetch(url: pageURL), !http.isAntiBot {
+                    title = MetadataFetcher.cleanTitle(http.title)
+                    if imageData == nil, let u = http.imageURL { imageData = await MetadataFetcher.downloadImage(url: u) }
+                }
+            }
+
+            // 3: Screenshot if no image
             if imageData == nil {
                 imageData = try? await ScreenshotService.shared.takeScreenshot(of: pageURL)
             }
