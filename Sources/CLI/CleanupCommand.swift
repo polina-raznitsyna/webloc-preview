@@ -21,9 +21,32 @@ struct CleanupCommand: ParsableCommand {
             print("Removed log file.")
         }
 
-        // 3. Scan for xattr marks
-        print("Scanning for processed .webloc files to remove marks...")
+        // 3. Remove Telegram config directory (~/.webloc-preview)
+        let configDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".webloc-preview")
+        if FileManager.default.fileExists(atPath: configDir.path) {
+            try FileManager.default.removeItem(at: configDir)
+            print("Removed Telegram configuration (~/.webloc-preview).")
+        }
+
+        // 4. Remove system caches
         let home = FileManager.default.homeDirectoryForCurrentUser
+        let cacheDirs = [
+            "Library/Caches/webloc-preview",
+            "Library/WebKit/webloc-preview",
+            "Library/HTTPStorages/webloc-preview",
+            "Library/HTTPStorages/webloc-preview.binarycookies",
+        ]
+        for dir in cacheDirs {
+            let path = home.appendingPathComponent(dir)
+            if FileManager.default.fileExists(atPath: path.path) {
+                try? FileManager.default.removeItem(at: path)
+                print("Removed \(dir).")
+            }
+        }
+
+        // 5. Scan for xattr marks
+        print("Scanning for processed .webloc files to remove marks...")
         let exclusionFilter = ExclusionFilter(customExclusions: [])
         let enumerator = FileManager.default.enumerator(at: home, includingPropertiesForKeys: nil)
         var count = 0
