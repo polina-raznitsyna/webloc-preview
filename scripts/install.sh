@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-REPO="YOUR_GITHUB_USER/webloc-preview"
+REPO="polina-raznitsyna/webloc-preview"
 INSTALL_DIR="/usr/local/bin"
 
 echo "Installing webloc-preview..."
